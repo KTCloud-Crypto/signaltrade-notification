@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     telegram_api_timeout_seconds: float = 5.0
     metrics_enabled: bool = True
     notification_metrics_port: int = 9104
+    identity_service_url: str = "http://identity-api:8000"
+    strategy_service_url: str = "http://strategy-api:8000"
+    trading_service_url: str = "http://trading-api:8000"
+    portfolio_service_url: str = "http://portfolio-api:8000"
+    internal_service_token: str = ""
+    service_timeout_seconds: float = 5.0
 
 
 settings = Settings()

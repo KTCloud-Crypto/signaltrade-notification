@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import signal
 import threading
@@ -7,6 +8,7 @@ from prometheus_client import Counter, start_http_server
 from signaltrade_notification.config import settings
 from signaltrade_notification.delivery import deliver_notification
 from signaltrade_notification.queue import QueueMessage, SqsQueueAdapter
+from signaltrade_notification.poller import run_telegram_poller
 
 logger = logging.getLogger(__name__)
 DELIVERED = Counter("signaltrade_notifications_delivered_total", "Delivered notifications")
@@ -40,13 +42,25 @@ def consume_notifications(stop: threading.Event) -> None:
             stop.wait(1)
 
 
-def run() -> None:
+async def main() -> None:
     logging.basicConfig(level=settings.log_level.upper())
-    stop = threading.Event()
-    signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    signal.signal(signal.SIGINT, lambda *_: stop.set())
+    stop = asyncio.Event()
+    delivery_stop = threading.Event()
+    loop = asyncio.get_running_loop()
+    def request_stop() -> None:
+        stop.set()
+        delivery_stop.set()
+    for signal_name in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(signal_name, request_stop)
     if settings.metrics_enabled:
         start_http_server(settings.notification_metrics_port)
     logger.info("Notification worker started: queue=%s",
                 settings.sqs_notification_queue_name)
-    consume_notifications(stop)
+    poller = asyncio.create_task(run_telegram_poller(stop))
+    delivery = asyncio.create_task(asyncio.to_thread(consume_notifications, delivery_stop))
+    await stop.wait()
+    await asyncio.gather(poller, delivery, return_exceptions=True)
+
+
+def run() -> None:
+    asyncio.run(main())
