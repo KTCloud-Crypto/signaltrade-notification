@@ -1,13 +1,10 @@
-# signaltrade-notification
+# SignalTrade Notification
 
-`NotificationRequested` 메시지를 SQS에서 소비해 Telegram으로 전달하는 독립 Worker입니다.
-전달에 성공한 메시지만 ACK하며 실패한 메시지는 SQS visibility timeout과 DLQ 정책에 맡깁니다.
+Telegram 알림 전송과 Telegram 명령 처리를 맡는 Worker입니다.
 
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/pytest
+```text
+src/signaltrade_notification/  Queue 소비·Telegram 처리
+tests/                         알림 처리 테스트
 ```
 
-기준 코드는 `KTCloud-Crypto`의 `feat/132`, 커밋
-`013107ae8ddd08bed02d88db89af7eeb0cf65bba`입니다.
+Notification Queue의 요청을 소비해 사용자에게 전달합니다. 사용자와 전략·주문 정보는 필요한 경우 각 서비스의 내부 HTTP API로 조회합니다.
