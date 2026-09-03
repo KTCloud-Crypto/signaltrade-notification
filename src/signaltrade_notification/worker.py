@@ -44,6 +44,10 @@ def consume_notifications(stop: threading.Event) -> None:
 
 async def main() -> None:
     logging.basicConfig(level=settings.log_level.upper())
+    # Telegram authenticates with a token embedded in the request URL. Keep the
+    # HTTP client's access log from writing that credential to container logs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     stop = asyncio.Event()
     delivery_stop = threading.Event()
     loop = asyncio.get_running_loop()
