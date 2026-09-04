@@ -24,3 +24,28 @@ def test_worker_acks_only_successful_delivery(monkeypatch):
     monkeypatch.setattr("signaltrade_notification.worker.deliver_notification", lambda _: False)
     assert process_notification(queue, item) is False
     queue.acknowledge.assert_not_called()
+
+
+def test_worker_acks_duplicate_without_sending_again(monkeypatch):
+    queue = MagicMock()
+    deduplicator = MagicMock()
+    deduplicator.begin.return_value = type("Lease", (), {"state": "delivered"})()
+    delivery = MagicMock(return_value=True)
+    monkeypatch.setattr("signaltrade_notification.worker.deliver_notification", delivery)
+    item = message()
+
+    assert process_notification(queue, item, deduplicator) is True
+    delivery.assert_not_called()
+    queue.acknowledge.assert_called_once_with(item)
+
+
+def test_worker_releases_delivery_lock_when_send_fails(monkeypatch):
+    queue = MagicMock()
+    lease = type("Lease", (), {"state": "acquired"})()
+    deduplicator = MagicMock()
+    deduplicator.begin.return_value = lease
+    monkeypatch.setattr("signaltrade_notification.worker.deliver_notification", lambda _: False)
+
+    assert process_notification(queue, message(), deduplicator) is False
+    deduplicator.release.assert_called_once_with(lease)
+    queue.acknowledge.assert_not_called()

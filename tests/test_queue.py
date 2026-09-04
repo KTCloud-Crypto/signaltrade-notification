@@ -23,3 +23,19 @@ def test_receive_and_acknowledge():
     assert message.receive_count == 2
     queue.acknowledge(message)
     assert client.deleted == {"QueueUrl": "queue-url", "ReceiptHandle": "receipt"}
+
+
+def test_invalid_message_does_not_block_valid_message():
+    valid_body = json.dumps({"message_id": str(uuid4()), "message_type": "NotificationRequested",
+        "occurred_at": datetime.now(timezone.utc).isoformat(), "correlation_id": "c",
+        "producer": "test", "payload": {}})
+    class Client:
+        def get_queue_url(self, **kwargs): return {"QueueUrl": "queue-url"}
+        def receive_message(self, **kwargs):
+            return {"Messages": [
+                {"MessageId": "bad", "ReceiptHandle": "bad-receipt", "Body": "not-json"},
+                {"MessageId": "good", "ReceiptHandle": "good-receipt", "Body": valid_body},
+            ]}
+    messages = SqsQueueAdapter(Client(), "notifications").receive()
+    assert len(messages) == 1
+    assert messages[0].receipt_handle == "good-receipt"
