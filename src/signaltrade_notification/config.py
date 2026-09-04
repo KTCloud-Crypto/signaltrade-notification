@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     sqs_endpoint_url: str = ""
     sqs_notification_queue_name: str = "signaltrade-notifications"
     sqs_notification_visibility_timeout_seconds: int = 120
+    redis_url: str = "redis://localhost:6379/0"
+    notification_processing_ttl_seconds: int = 120
+    notification_dedup_ttl_seconds: int = 604800
     telegram_bot_token: str = ""
     telegram_api_base_url: str = "https://api.telegram.org"
     telegram_api_timeout_seconds: float = 5.0

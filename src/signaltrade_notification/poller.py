@@ -91,9 +91,11 @@ def close_menu(chat_id: str) -> tuple[str, tuple[int, ...]]:
     return "🚨 포지션 전량 매도\n/all - 모든 포지션\n/cancel - 취소", ids
 
 
-async def execute_close(chat_id: str, ids: tuple[int, ...]) -> str:
+async def execute_close(chat_id: str, ids: tuple[int, ...], idempotency_key: str) -> str:
     user = get_telegram_user(chat_id)
-    result = await request_manual_liquidations(user.id, list(ids)) if user else None
+    result = await request_manual_liquidations(
+        user.id, list(ids), idempotency_key
+    ) if user else None
     if result is None:
         return "⚠️ 전량 매도 요청 전달에 실패했습니다."
     requested, failures = result
@@ -201,13 +203,24 @@ class TelegramPoller:
                 reply = "⚠️ 선택한 포지션을 시장가로 전량 매도합니다.\n/confirm - 실행\n/cancel - 취소"
         elif command == "/confirm" and chat_id in self._pending:
             pending = self._pending.pop(chat_id)
-            reply = (await execute_close(chat_id, pending.subscription_ids)
+            reply = (await execute_close(
+                chat_id, pending.subscription_ids,
+                f"telegram-update:{int(update['update_id'])}",
+            )
                      if pending.action == "close_confirm" else "⚠️ 먼저 /close를 입력해 주세요.")
         elif text.startswith("/"):
             reply = "❓ 등록되지 않은 명령어입니다.\n사용 가능한 명령을 확인하려면 /help를 입력해 주세요."
         else:
             return
         await self._send_message(client, chat_id, reply)
+
+    async def _process_updates(self, client: httpx.AsyncClient, updates: list[dict]) -> None:
+        for update in updates:
+            update_id = int(update["update_id"])
+            await self._handle_update(client, update)
+            # Telegram은 다음 offset을 보내면 그 이전 업데이트를 처리 완료로
+            # 간주한다. 명령 처리와 답장 전송이 모두 끝난 뒤에만 전진시킨다.
+            self._offset = update_id + 1
 
     async def run(self, stop: asyncio.Event) -> None:
         async with httpx.AsyncClient(timeout=httpx.Timeout(35, connect=10)) as client:
@@ -217,9 +230,7 @@ class TelegramPoller:
                     response = await client.get(f"{self._base_url}/getUpdates",
                                                 params={"offset": self._offset, "timeout": 25})
                     response.raise_for_status()
-                    for update in response.json().get("result", []):
-                        self._offset = int(update["update_id"]) + 1
-                        await self._handle_update(client, update)
+                    await self._process_updates(client, response.json().get("result", []))
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:

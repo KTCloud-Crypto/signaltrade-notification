@@ -1,10 +1,13 @@
 from dataclasses import dataclass
+import logging
 from typing import Any
 
 import boto3
 
 from signaltrade_notification.config import settings
 from signaltrade_notification.envelope import MessageEnvelope
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -39,9 +42,20 @@ class SqsQueueAdapter:
             QueueUrl=self._get_queue_url(), MaxNumberOfMessages=max_messages,
             WaitTimeSeconds=wait_time_seconds, VisibilityTimeout=visibility_timeout,
             AttributeNames=["ApproximateReceiveCount"])
-        return [QueueMessage(item["ReceiptHandle"], MessageEnvelope.from_json(item["Body"]),
-                             int(item.get("Attributes", {}).get("ApproximateReceiveCount", "1")))
-                for item in response.get("Messages", [])]
+        messages = []
+        for item in response.get("Messages", []):
+            try:
+                messages.append(QueueMessage(
+                    item["ReceiptHandle"],
+                    MessageEnvelope.from_json(item["Body"]),
+                    int(item.get("Attributes", {}).get("ApproximateReceiveCount", "1")),
+                ))
+            except (KeyError, TypeError, ValueError):
+                logger.warning(
+                    "Invalid notification queue message left for DLQ redrive: message_id=%s",
+                    item.get("MessageId", "unknown"),
+                )
+        return messages
 
     def acknowledge(self, message: QueueMessage) -> None:
         self._client.delete_message(QueueUrl=self._get_queue_url(),

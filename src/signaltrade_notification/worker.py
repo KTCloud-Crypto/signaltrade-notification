@@ -7,6 +7,7 @@ from prometheus_client import Counter, start_http_server
 
 from signaltrade_notification.config import settings
 from signaltrade_notification.delivery import deliver_notification
+from signaltrade_notification.deduplication import RedisDeliveryDeduplicator
 from signaltrade_notification.queue import QueueMessage, SqsQueueAdapter
 from signaltrade_notification.poller import run_telegram_poller
 
@@ -15,26 +16,49 @@ DELIVERED = Counter("signaltrade_notifications_delivered_total", "Delivered noti
 FAILED = Counter("signaltrade_notifications_failed_total", "Failed notification deliveries")
 
 
-def process_notification(queue: SqsQueueAdapter, message: QueueMessage) -> bool:
-    delivered = deliver_notification(message.envelope)
+def process_notification(queue: SqsQueueAdapter, message: QueueMessage,
+                         deduplicator: RedisDeliveryDeduplicator | None = None) -> bool:
+    lease = deduplicator.begin(str(message.envelope.message_id)) if deduplicator else None
+    if lease and lease.state == "delivered":
+        queue.acknowledge(message)
+        logger.info("Duplicate notification acknowledged: message_id=%s",
+                    message.envelope.message_id)
+        return True
+    if lease and lease.state == "processing":
+        return False
+    try:
+        delivered = deliver_notification(message.envelope)
+    except Exception:
+        if lease:
+            deduplicator.release(lease)
+        raise
     if delivered:
+        if lease:
+            deduplicator.complete(lease)
         queue.acknowledge(message)
         DELIVERED.inc()
         logger.info("Notification delivered: message_id=%s notification_type=%s",
                     message.envelope.message_id,
                     message.envelope.payload.get("notification_type"))
     else:
+        if lease:
+            deduplicator.release(lease)
         FAILED.inc()
     return delivered
 
 
 def consume_notifications(stop: threading.Event) -> None:
     queue = SqsQueueAdapter.from_settings()
+    deduplicator = RedisDeliveryDeduplicator.from_url(
+        settings.redis_url,
+        settings.notification_processing_ttl_seconds,
+        settings.notification_dedup_ttl_seconds,
+    )
     while not stop.is_set():
         try:
             for message in queue.receive(
                 visibility_timeout=settings.sqs_notification_visibility_timeout_seconds):
-                if not process_notification(queue, message):
+                if not process_notification(queue, message, deduplicator):
                     logger.warning("Notification delivery failed; message left unacknowledged: %s",
                                    message.envelope.message_id)
         except Exception:
