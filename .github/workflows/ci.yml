@@ -27,3 +27,17 @@ jobs:
       - run: docker build -t signaltrade-notification:ci .
       - name: Smoke test installed worker package
         run: docker run --rm --entrypoint python signaltrade-notification:ci -c "import signaltrade_notification.worker"
+
+  publish-staging-image:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions: {contents: read, id-token: write}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: {role-to-assume: "arn:aws:iam::832496385575:role/signaltrade-staging-github-notification-ecr", aws-region: us-east-1}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/build-push-action@v6
+        with: {context: ., push: true, tags: "832496385575.dkr.ecr.us-east-1.amazonaws.com/signaltrade/notification:${{ github.sha }}"}
